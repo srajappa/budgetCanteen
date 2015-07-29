@@ -1,21 +1,19 @@
 /*
 * Description: 
-* Main calls functions in helper.c to perform operations after validatation of inputs viz. 
-* 1. Scraping and saving JSON data from the given webpage.
-* 2. Analyze the content and create several CSV files which are differentiated based on the date.
-* 3. Check the system date and find the appropriate menus that are either fit for that date or further dates. 
-* 4. Perform analysis to what can be purchased for the current date on a given limit of budget and then print the same.
-* 5. Delete all the meta-data files. 
+* Calls functions in helper.c . 
 * Date: 2 July, 2015
 * @author: Srinivasan Rajappa
 */
 
 #include "bistro.h"
+#include "error.h"
+
 
 int main(int argc, char*argv[]){
-	const char url[] = "http://codapi.zappos.biz/menus";
+	refresh(START);
+
 	char *rawFile,*csvfile,*sysDate;
-	
+	const char url[] = "http://codapi.zappos.biz/menus";
 	float budgetVal;
 	
 	
@@ -30,14 +28,19 @@ int main(int argc, char*argv[]){
 	sysDate = systemDate();				//Find the system date and save it in sysDate variable. 
 	
 	//Debugging statements
-		strcpy(sysDate,"2015-05-11");	
+	//strcpy(sysDate,"2015-05-11");	
 	
 	returnBestList(sysDate,directoryExam());	//Use the sysdate to find the appropriate files and then perform operations.
 	
-	printf("HAVE A NICE DAY! \n");
-
 	purgeFiles(directoryExam());				//Maintenance :) 
 	deleteFile(rawFile);
 
+	refresh(STOP);
+
 	return 0;
 }
+
+
+/*--2015-07-10 02:03:09--  http://codapi.zappos.biz/menus
+Resolving codapi.zappos.biz (codapi.zappos.biz)... failed: Name or service not known.
+wget: unable to resolve host address ‘codapi.zappos.biz’*/

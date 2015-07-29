@@ -10,10 +10,9 @@
 #include "sys/stat.h"
 
 
-
+/*const char url[] = "http://codapi.zappos.biz/menus";*/
 
 char *readURL(char*);
-
 float validator(int, char*[]);
 float validBudgetInput(char*);
 float stringToFloat(char *);
@@ -44,5 +43,27 @@ void makeDecision(char *);
 void returnBestList(char *,char *);
 void purgeFiles(char *);
 void deleteFile(char *);
+char *properFormat(char*);
+
+
+
+#define MAXLINE 2048
+#define STR_MAX 128
+#define MAXFILE 1024
+#define SINGLE 1
+#define MULTI 2
+#define NOTFOUND -999
+#define FOUND 1
+#define MG 50
+#define NG 20
+#define FREE 0
+#define NEED_I 0
+#define NEED_J 1
+
+#define max(a,b) a>=b ? a: b
+#define min(a,b) a<b  ? a: b
+
+
+
 
 #endif

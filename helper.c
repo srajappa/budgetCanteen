@@ -2,8 +2,20 @@
 * Contains all the helper functions that will help extract JSON data from weblink
 * and create multple CSV files. Some functions also perform analysis so that a best fit
 * can be found to buy content on a limited budget. 
+* Other functions help validate the command line input etc. 
+* All the operations are tracked by logging events and errors.
+* There are various sections and each section has similar set of functions.
+* 1. String Utilities.
+* 2. Date related functions.
+* 3. Input Validators.
+* 4. File Download and directory exploration fucntions.
+* 5. JSON data parsing and CSV file operations. 
+* 6. Operations involving calculation of best solutions. 
+* 7. Purging meta data files. 
 * @author: Srinivasan Rajappa
 * Date: 2 July, 2015
+* Edited: 
+*      - 11 July, 2015 
 */
 
 #include "bistro.h"
@@ -11,25 +23,11 @@
 #include "unistd.h"
 #include "dirent.h"
 #include "sys/stat.h"
+#include "error.h"
 
 
 
-#define MAXLINE 2048
-#define STR_MAX 128
-#define MAXFILE 1024
-#define SINGLE 1
-#define MULTI 2
-#define NOTFOUND -999
-#define FOUND 1
-#define MG 50
-#define NG 20
-#define FREE 0
-#define NEED_I 0
-#define NEED_J 1
-
-#define max(a,b) a>=b ? a: b
-#define min(a,b) a<b  ? a: b
-
+const char url[] = "http://codapi.zappos.biz/menus";
 
 int numOfVal=0;
 int numOfFiles = 0;
@@ -37,27 +35,20 @@ char *firstEntry;
 float bd;
 int dot,prec=0;
 char str_budget[10];
+int norteDam = 0; 
+char filteredItem[MG];
+int EXCLUSION_MODE = 0;
+int WRONG_DATE = 0;
 
-/*
-* Function: validator
-* Description:
-* Analyzes the arguments and checks if the input are valid, 
-* else throws out errors and terminates the application.
-* If the arguments are correct then budget value is extracted and is returned as float.
-* @author: Srinivasan Rajappa
-* Date: 2 July, 2015
-*/
 
-float validator(int argc, char *argv[]){
-	float ret; 
-	if(argc==1 || argc>2){
-		printf("Invalid number of Arguments \n\t Valid Arguments - ./appname BUDGET \n\t BUDGET (float/int)\n");
-		exit(0);
-	}else{		
-		ret = validBudgetInput(argv[1]);
-		return ret;
-	}
-}
+
+
+//===============================================================================================================================//
+//=============================== String Utility functions here, below ==========================================================//
+//===============================================================================================================================//
+//===============================================================================================================================//
+
+
 
 /*
 * Function: Toupper
@@ -68,49 +59,13 @@ float validator(int argc, char *argv[]){
 */
 char *Toupper(char*strVal){
 	int i=0; 
-	static char tmpStr[NG];
+	static char tmpStr[MG];
 	strcpy(tmpStr,strVal);
 	while(tmpStr[i]){
 		tmpStr[i] = toupper(tmpStr[i]);
 		i++;
 	}
 	return(tmpStr);
-}
-
-/*
-* Function: validBudgetInput
-* Description:
-* It analyzes if the budget entry is indeed a valid number. 
-* @author: Srinivasan Rajappa
-* Date: 2 July, 2015
-*/
-float validBudgetInput(char *budStr){
-	int i,j,hasDoll; 
-	float value;
-	
-	if(strcmp("FREE",Toupper(budStr))==0)
-		return 0;
-
-
-	for(i=0; budStr[i]!='\0'; i++){
-		if(budStr[i] >= 48 && budStr[i] <= 57 || budStr[i]== 46){
-			continue;
-		}else{
-			printf("Invalid Argument (BUDGET)\n\t Expected Format - number  \n");
-			exit(0);
-		}
-	}	
-	memset(str_budget,'\0',10);
-	strcpy(str_budget,budStr);
-	value = stringToFloat(budStr);
-	if(value<0){
-		printf("Budget value cannot be a negative, Try again\n");
-		exit(0);
-	}
-
-
-	bd = value; 					//Store the Budget value in a Global Variable. 
-	return value;
 }
 
 /*
@@ -185,9 +140,393 @@ int mapToInt(char c){
 		case '8': return 8;
 		case '9': return 9;
 		default: printf("mapToInt: Input Error\n");
-				 exit(0);
+				 logEntry("mapToInt: ","Input to switch incorrect",Err);
+				 Exit(EXIT_ABNORMAL);
 	}
 }
+
+
+/*
+* Function: strMatchCase
+* Description:
+* Checks whether a string is a substring of another irrespective of case. 
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+*/
+int strMatchCase(char *ch, char *comp){
+	int i,j, k,l;
+	i=j=k=l=0; 
+	int check=0,ind=0;
+	char s1[strlen(ch)];
+	char s2[strlen(comp)];
+		memset(s1,'\0',strlen(ch));
+		memset(s2,'\0',strlen(comp));
+
+	strcpy(s1,ch);
+	strcpy(s2,comp);
+
+	strcpy(s1,Toupper(s1));			//change case of both strings to upper.
+	strcpy(s2 ,Toupper(s2));
+
+	if(strlen(s1)<strlen(s2))
+		return NOTFOUND;
+	for(i=0; i<strlen(s1)-strlen(s2)+1; i++){
+		k=i;
+		for(j=0;j<strlen(s2);j++){
+			if(s1[k]==s2[j]){
+				k++;
+				check++;
+			}
+			else{
+				break;
+			}
+		}
+		k=0;
+		if(check==strlen(s2)){
+			l = 1;
+			break;
+		}
+		check=0;
+	}
+
+	return l==0 ?  NOTFOUND : FOUND;
+}
+
+
+/*
+* Function: strMatch
+* Description:
+* returns FOUND (1) if the second string is present in the first. 
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+*/
+int strMatch(char *ch, char *comp){
+	int i,j, k,l;
+	i=j=k=l=0; 
+	int check=0,ind=0;
+	if(strlen(ch)<strlen(comp))
+		return NOTFOUND;
+	for(i=0; i<strlen(ch)-strlen(comp)+1; i++){
+		k=i;
+		for(j=0;j<strlen(comp);j++){
+			if(ch[k]==comp[j]){
+				k++;
+				check++;
+			}
+			else{
+				break;
+			}
+		}
+		k=0;
+		if(check==strlen(comp)){
+			l = 1;
+			break;
+		}
+		check=0;
+	}
+
+	return l==0 ?  NOTFOUND : FOUND;
+}
+
+
+/*
+* Function: sortFileNames
+* Description:
+* Sorts a list of strings.
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+*/
+void sortFileNames(char **dayFiles, int num){
+	int i,j;
+	char temp[NG];
+		memset(temp,'\0',NG);
+	for(i=0; i< num; i++){
+		for (j=0; j < num-1; j++){
+			if(strcmp(dayFiles[j],dayFiles[j+1])>0){
+				strcpy(temp,dayFiles[j]);
+				strcpy(dayFiles[j],dayFiles[j+1]);
+				strcpy(dayFiles[j+1],temp);
+				memset(temp,'\0',NG);
+			}
+		}
+	}
+
+}
+
+
+
+//===============================================================================================================================//
+//=============================== Date Related functions here, below ============================================================//
+//===============================================================================================================================//
+//===============================================================================================================================//
+
+/*
+* Function: systemDate
+* Description:
+* Returns system date as a string. 
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+*/
+char *systemDate(){
+	time_t now = time(NULL);
+	int m,d,y;
+    struct tm *Time = localtime(&now);
+    m = Time->tm_mon + 1;
+    d = Time->tm_mday;
+    y = Time->tm_year+1900;
+    char *mm,*dd,*yy;
+    mm = (char*)malloc(sizeof(char)*NG);
+    dd = (char*)malloc(sizeof(char)*NG); 
+    yy = (char*)malloc(sizeof(char)*NG);
+
+    memset(mm,'\0',NG);
+    memset(yy,'\0',NG);
+   	memset(dd,'\0',NG);
+    
+    if(m<10){
+    	snprintf(mm,sizeof(mm),"%d",m);
+    	mm[1] = mm[0];
+    	mm[0] = '0';
+    }else{
+    	snprintf(mm,sizeof(mm),"%d",m);
+    }
+
+    if(d<10){
+    	snprintf(dd,sizeof(dd),"%d",d);
+    	dd[1] = dd[0];
+    	dd[0] = '0';
+    }else{
+    	snprintf(dd,sizeof(dd),"%d",d);
+    } 
+
+    snprintf(yy,sizeof(yy),"%d",y);
+
+    strcat(yy,"-");
+    strcat(mm,"-");
+    strcat(mm,dd);
+    strcat(yy,mm);
+   	logEntry("systemDate: ",yy,Info);
+
+    return yy;
+}
+
+/*
+* Function: formatDate
+* Description:
+* bespoke function to trim the date to a more friendly format. 
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+*/
+void formatDate(char* dateVal){
+	int i; 
+	int flag = 0; 
+	for (i=0; i<strlen(dateVal);i++){
+		if(flag==1){
+			dateVal[i] = '\0';
+		}
+		if(dateVal[i]=='T'){
+			dateVal[i] = '\0';
+			flag =1;
+		}
+	}
+}
+
+/*
+* Function: properFormat
+* Description:
+* Changes the format of date from YYYY-MM-DD to DD Month, YYYY. Looks pretty good. 
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+*/
+char *properFormat(char *name){
+	
+	int year, month, date,i,j=0;
+	for(i=0; i< 11; i++){
+		if(i==4 || i==7)
+			continue;
+		else {
+			if(name[i]>57 && name[i] <48){
+				printf("Date Error- expected format YYYY-MM-DD\n");
+				logEntry("properFormat (Incorrect date): ",name,Err);
+				Exit(EXIT_APP);
+			}
+		}
+	}
+
+
+	year = atoi(csvVal(name,'-',1));
+	month = atoi(csvVal(name,'-',2));
+	
+
+	name[10]='-';
+	name[11]='\0';
+
+	date = atoi(csvVal(name,'-',3));
+	memset(name,'\0',MG);
+	switch(month){
+		case 1:	snprintf(name,MG,"%d January,%d",date, year);
+				break;
+		case 2:	snprintf(name,MG,"%d February,%d",date, year);
+				break;
+		case 3: snprintf(name,MG,"%d March,%d",date, year);
+				break;
+		case 4: snprintf(name,MG,"%d April,%d",date, year);
+				break;
+		case 5: snprintf(name,MG,"%d May,%d",date, year);
+				break;
+		case 6: snprintf(name,MG,"%d June,%d",date, year);
+				break;
+		case 7: snprintf(name,MG,"%d July,%d",date, year);
+				break;
+		case 8: snprintf(name,MG,"%d August,%d",date, year);
+				break;
+		case 9: snprintf(name,MG,"%d September,%d",date, year);
+				break;
+		case 10:snprintf(name,MG,"%d October,%d",date, year);
+				break;
+		case 11:snprintf(name,MG,"%d November,%d",date, year);
+				break;
+		case 12:snprintf(name,MG,"%d December,%d",date, year);
+				break;
+		default: logEntry("properFormat: ","Month entry incorrect",Err);
+				 Exit(EXIT_ABNORMAL);
+	}
+	return name;
+}
+
+
+//===============================================================================================================================//
+//=============================== Input Validating functions here, below ========================================================//
+//===============================================================================================================================//
+//===============================================================================================================================//
+
+
+/*
+* Function: validator
+* Description:
+* Analyzes the arguments and checks if the input are valid, 
+* else throws out errors and terminates the application.
+* If the arguments are correct then budget value is extracted and is returned as float.
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+*/
+
+float validator(int argc, char *argv[]){
+	float ret; 
+	char inDate[NG];
+		memset(inDate,'\0',NG);
+	int i;
+	if(argc==1){
+		printf("Invalid number of Arguments \nType\n\t./executable -HELP for help\n");
+		exit(0);
+	}else{
+		if(strcmp(Toupper(argv[1]),"-HELP")==0){
+			logEntry("Help: ", "happy to do ;)", Info);
+
+			printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
+			printf("Application prints the items that can be purchased\nfor consumption on a given budget per day.\n");
+			printf("Running modes are as follows\n");
+			printf("\t- ./executable BUDGET  \n\t\t[BUDGET amount can have decimal values]\n");
+			printf("\t- ./executable BUDGET ITEM \n\t\t[ITEM refers to the specific food dish you want to exclude from list]\n");
+			printf("=====================================\n");
+			printf("Application can also show the Menu for particular day.\n");
+			printf("\t- ./executable MENU \n\t\tPrints the Menu available for the upcoming dates.\n");
+			printf("\t- ./executable MENU YYYY-MM-DD\n\t\tPrints the Menu available for given date.\n");
+			Exit(EXIT_APP);
+		}else if(strcmp(Toupper(argv[1]),"MENU")==0){
+			//If a date is entered
+			if(argc==3){
+				strtok(argv[2],"\n");
+				strcpy(inDate,argv[2]);
+
+				
+				if(inDate[4]=='-' && inDate[7]=='-' && strlen(inDate)==10){
+					logEntry("Menu: Additional Param ",inDate,Info);
+					char *rawFile = readURL(url);				
+					parseFile(rawFile);
+
+					properFormat(inDate);
+					printf("\n\t****Menu for Date: %s****\n",inDate);
+					printf("-----------------------------------------------------\n");
+						memset(inDate,'\0',NG);
+					strcpy(inDate,argv[2]);
+					strcat(inDate,".csv");
+					
+					printContentFile(inDate);
+					printf("_____________________________________________________\n");
+					purgeFiles(directoryExam());
+					deleteFile(rawFile);
+
+					//free(rawFile);
+
+				}
+				Exit(EXIT_APP);
+			}
+			displayMenu();
+		}else{
+			ret = validBudgetInput(argv[1]);
+			if(argc == 3){
+				memset(filteredItem,'\0',MG);
+				strcpy(filteredItem,strtok(argv[2],"\n"));
+				logEntry("Filter: ",filteredItem,Info);
+
+
+				printf("\n****Results after filtering: %s****\n",filteredItem );
+				EXCLUSION_MODE = 1;
+			}
+
+
+			return ret;
+		}
+	}
+}
+
+/*
+* Function: validBudgetInput
+* Description:
+* It analyzes if the budget entry is indeed a valid number. 
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+*/
+float validBudgetInput(char *budStr){
+	int i,j,hasDoll; 
+	float value;
+	
+	if(strcmp("FREE",Toupper(budStr))==0)
+		return 0;
+
+
+	for(i=0; budStr[i]!='\0'; i++){
+		if(budStr[i] >= 48 && budStr[i] <= 57 || budStr[i]== 46){
+			continue;
+		}else{
+			printf("Invalid Argument (BUDGET)\n\t Expected Format - number  \nType\n\t./executable -HELP for help\n");
+			WRONG_COMMAND;
+			logEntry("validBudgetInput: ","Budget Value not a number",Err);
+			Exit(EXIT_IO);
+		}
+	}	
+	memset(str_budget,'\0',10);
+	strcpy(str_budget,budStr);
+	value = stringToFloat(budStr);
+	if(value<0){
+		printf("Budget value cannot be a negative, Try again\nType\n\t./executable -HELP for help\n");
+		WRONG_COMMAND;
+		logEntry("validBudgetInput: ","Budget Value is negative",Err);
+		Exit(EXIT_IO);
+	}
+
+
+	bd = value; 					//Store the Budget value in a Global Variable. 
+	return value;
+}
+
+
+//===============================================================================================================================//
+//=============================== File Download and directory exploration fucntions, below ======================================//
+//===============================================================================================================================//
+//===============================================================================================================================//
+
 
 /*
 * Function: readURL
@@ -197,20 +536,97 @@ int mapToInt(char c){
 * @author: Srinivasan Rajappa
 * Date: 2 July, 2015
 */
-char *readURL(char* url){
+char *readURL(char* urlLink){
 
     FILE *filePtr;
     char wgetMagic[STR_MAX];
     memset(wgetMagic,'\0',STR_MAX);
     
     strcpy(wgetMagic, "wget --quiet ");
-    strcat(wgetMagic,url);
+    strcat(wgetMagic,urlLink);
     strcat(wgetMagic," -O urlContent.txt");
     
+    logEntry("wget on URL: ",urlLink,Info);
+
     filePtr = popen(wgetMagic,"w");
+   
+    if(filePtr == NULL){
+    	printf("Unable to connect to BISTRO Website\n\t Unable to check because computer isn't connected to Internet \n");
+    	logEntry("readURL: ","Internet Access Limited",Err);
+    	NO_CONNECTION_TO_INTERNET;
+    	Exit(0);
+    }
     pclose(filePtr);
     return("urlContent.txt");
 }
+
+
+/*
+* Function: getFileNames
+* Description:
+* Returns the file list in form of ; appending string values. 
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+* References: http://stackoverflow.com/questions/8149569/scan-a-directory-to-find-files-in-c
+*/
+
+char * getFileNames(char *dir){
+	int i=0,j=0,count=0; 
+	char *namesOfFiles;
+	DIR *dp,*ds;
+    struct dirent *entry;
+    struct stat statbuf;
+    if((dp = opendir(dir)) == NULL) {
+        fprintf(stderr,"cannot open directory: %s\n", dir);
+        logEntry("getFileNames: ","Directory Missing",Err);
+        Exit(EXIT_TRANS);
+    }
+    chdir(dir);
+    namesOfFiles = (char*)malloc(sizeof(char)*MAXLINE);
+    	memset(namesOfFiles,'\0',MAXLINE);
+
+    while((entry = readdir(dp)) != NULL) {
+        lstat(entry->d_name,&statbuf);
+        if(strMatch(entry->d_name,".csv")==FOUND && entry->d_name[4]== '-' && entry->d_name[7]=='-'){
+        	strcat(namesOfFiles,entry->d_name);
+        	strcat(namesOfFiles,";");
+        	i++;
+        }
+    }
+    numOfFiles = i;
+    return namesOfFiles;
+}
+/*
+* Function: directoryExam
+* Description:
+* It calls the above function; it has stop gate measures to avoid
+* falling into a situation when the current working directory is 
+* not to be found. 
+* @author: Srinivasan Rajappa
+* Date: 2 July, 2015
+* References: http://stackoverflow.com/questions/298510/how-to-get-the-current-directory-in-a-c-program
+*/
+
+char* directoryExam(){
+	char cwd[MG];
+	if (getcwd(cwd, sizeof(cwd)) == NULL){
+       	fprintf(stderr,"Cannot find current working directory\n");
+        logEntry("directoryExam: ","Current Working Directory missing",Err);
+        Exit(EXIT_TRANS);
+    }
+    else
+    	return getFileNames(cwd);
+}
+
+
+
+
+//===============================================================================================================================//
+//=============================== JSON data extraction and parsing functions here, below ========================================//
+//===============================================================================================================================//
+//===============================================================================================================================//
+
+
 
 /*
 * Function: parseFile
@@ -222,15 +638,30 @@ char *readURL(char* url){
 * Date: 2 July, 2015
 */
 void parseFile(char *rawFile){
-	FILE *filePtr;
-	char temp;
-	int i = 0,j, parendCalc =0;
+	FILE *filePtr,*noInt;
+	char temp,c;
+	int i = 0,j, parendCalc =0,noI=0;
 	char *str = (char*) malloc(sizeof(char)*MAXLINE);
 	filePtr = fopen(rawFile,"r");
+	noInt = fopen(rawFile,"r");
+
 	if(filePtr==NULL){
 		printf("parseFile: FILE %s couldn't be opened\n", rawFile);
 		exit(0);
 	}
+
+	while(c=(char)fgetc(noInt)!=EOF){
+		noI++;
+	}
+	fclose(noInt);
+	if(noI <10){
+		printf("Unable to connect to BISTRO Website.\nUnable to check because computer isn't connected to Internet. \n");
+		logEntry("readURL: ","Internet Access Limited",Err);
+    	NO_CONNECTION_TO_INTERNET;
+    	deleteFile(rawFile);
+    	Exit(0);
+	}
+
 	while(i!=10){		//Position the cursor to the head 
 		temp = (char) fgetc(filePtr);
 		i++;
@@ -294,40 +725,7 @@ char * extract_val(int index,char *ptr){
 	return newString;
 }
 
-/*
-* Function: strMatch
-* Description:
-* returns FOUND (1) if the second string is present in the first. 
-* @author: Srinivasan Rajappa
-* Date: 2 July, 2015
-*/
-int strMatch(char *ch, char *comp){
-	int i,j, k,l;
-	i=j=k=l=0; 
-	int check=0,ind=0;
-	if(strlen(ch)<strlen(comp))
-		return NOTFOUND;
-	for(i=0; i<strlen(ch)-strlen(comp)+1; i++){
-		k=i;
-		for(j=0;j<strlen(comp);j++){
-			if(ch[k]==comp[j]){
-				k++;
-				check++;
-			}
-			else{
-				break;
-			}
-		}
-		k=0;
-		if(check==strlen(comp)){
-			l = 1;
-			break;
-		}
-		check=0;
-	}
 
-	return l==0 ?  NOTFOUND : FOUND;
-}
 
 /*
 * Function: match
@@ -398,26 +796,6 @@ char ** extractValue(char *ptr, char *comp, int MODE){
 	}
 }
 
-/*
-* Function: formatDate
-* Description:
-* bespoke function to trim the date to a more friendly format. 
-* @author: Srinivasan Rajappa
-* Date: 2 July, 2015
-*/
-void formatDate(char* dateVal){
-	int i; 
-	int flag = 0; 
-	for (i=0; i<strlen(dateVal);i++){
-		if(flag==1){
-			dateVal[i] = '\0';
-		}
-		if(dateVal[i]=='T'){
-			dateVal[i] = '\0';
-			flag =1;
-		}
-	}
-}
 
 /*
 * Function: analyzeTrail
@@ -482,41 +860,7 @@ void analyzeTrail(char *str){
 	numOfVal = 0; 
 }
 
-/*
-* Function: systemDate
-* Description:
-* Returns system date as a string. 
-* @author: Srinivasan Rajappa
-* Date: 2 July, 2015
-*/
-char *systemDate(){
-	time_t now = time(NULL);
-	int m,d,y;
-    struct tm *Time = localtime(&now);
-    m = Time->tm_mon + 1;
-    d = Time->tm_mday;
-    y = Time->tm_year+1900;
-    char *mm,*dd,*yy;
-    mm = (char*)malloc(sizeof(char)*10);
-    dd = (char*)malloc(sizeof(char)*10); 
-    yy = (char*)malloc(sizeof(char)*10);
 
-    memset(mm,'\0',10);
-    memset(yy,'\0',10);
-   	memset(dd,'\0',10);
-    
-    
-    snprintf(mm,sizeof(mm),"%d",m);
-    snprintf(dd,sizeof(dd),"%d",d);
-    snprintf(yy,sizeof(yy),"%d",y);
-
-    strcat(yy,"-");
-    strcat(mm,"-");
-    strcat(mm,dd);
-    strcat(yy,mm);
-
-    return yy;
-}
 
 /*
 * Function: csvVal
@@ -560,6 +904,131 @@ char *csvVal(char*line,char symbol, int num){
 	}
 	return NULL;
 }
+
+
+//===============================================================================================================================//
+//=============================== Calculation of optimal solution done here, below ==============================================//
+//===============================================================================================================================//
+//===============================================================================================================================//
+
+
+void printContentFile(char *fileName){
+	FILE *fptr,*recPtr;
+	fptr = fopen(fileName,"r");
+	recPtr = fopen(fileName,"r");
+	//char tmp[STR_MAX];
+	logEntry("printContentFile:(dated) ",fileName,Info);
+	char *tmp = (char*)malloc(sizeof(char)*STR_MAX);
+
+	char c;
+	int k=0;
+	//printf("FILE: %s\n",fileName);
+	if(fptr==NULL){
+		printf("No items available on  %s in the database\n",properFormat(csvVal(fileName,'.',1)));
+		printf("_____________________________________________________\n");
+		purgeFiles(directoryExam());
+		deleteFile("urlContent.txt");
+		logEntry("printContentFile: ","Nothing available today",Info);
+		Exit(EXIT_APP);
+	}else{
+		char line[128];
+			memset(line,'\0',128);
+
+		while((c=(char)fgetc(recPtr))!=EOF){
+	    	k++;
+	    }
+	    fclose(recPtr);
+	    //printf("All ok\n");
+		while(fgets(line,k,fptr)){
+			memset(tmp,'\0',STR_MAX);
+			strcpy(tmp,strdup(line));
+			if(strMatchCase(csvVal(tmp,',',1),"Closed")==FOUND || strMatchCase(csvVal(tmp,',',1),"Holiday")==FOUND)
+				printf("Closed for the Holiday\n");
+			else{
+				if(strMatchCase(csvVal(tmp,',',1),"NULL")==FOUND)			//Skip null entries;
+					continue;						
+/*				if(strMatchCase(csvVal(tmp,',',2),"free")==FOUND || 
+						strcmp(csvVal(tmp,',',2),"0.00")==0 ||
+						strcmp(csvVal(tmp,',',2),"0")==0 ||
+						strcmp(csvVal(tmp,',',2),"0.0")==0) 
+					printf("%-40s Free\n",csvVal(tmp,'-',1));*/
+				else{
+					printf("%-40s $%.2f\n",csvVal(tmp,',',1),stringToFloat(csvVal(tmp,',',2)));
+				}	
+					//printf("%s\n",tmp);
+			}
+		}
+	}
+
+
+	fclose(fptr);
+}
+
+
+void displayMenu(){
+	int i,j=0,k=0,q=0;
+	char c;
+	char name[NG];
+		memset(name,'\0',NG);
+
+
+	char *rawFile = readURL(url);				
+	
+	parseFile(rawFile);	
+
+	char filesList[MAXLINE];
+		memset(filesList,'\0',MAXLINE);
+	strcpy(filesList,directoryExam());
+
+	char *sysDate = (char*)malloc(sizeof(char)*MG);
+		memset(sysDate,'\0',MG);
+	sysDate = systemDate();
+	//strcpy(sysDate,"2015-05-11");
+	char **dayFiles = malloc(sizeof(char*)*STR_MAX);
+
+	strcat(sysDate,".csv");
+	
+	for(i=0; i<strlen(filesList);i++){
+		if(filesList[i]==';'){
+			name[j]='\0';
+			j=0;
+			
+			if(strcmp(sysDate,name)<=0){
+				dayFiles[q] = (char*)malloc(sizeof(char)*NG);
+					memset(dayFiles[q],'\0',NG);
+				strcpy(dayFiles[q++],name); 
+			}
+		}else{
+			name[j++]=filesList[i];
+		}
+	}
+	sortFileNames(dayFiles,q);
+	char tempDate[NG];
+	for(i=0; i<q; i++){
+		printf("\n");
+		
+			memset(tempDate,'\0',NG);
+		strcpy(tempDate,dayFiles[i]);
+		//printf("%s \n",tempDate );
+		if(strcmp(sysDate,dayFiles[i])==0)
+			printf("Date: %s (Today)\n",properFormat(tempDate) );
+		else{
+			printf("Date: %s\n",properFormat(tempDate) );
+		}
+		printf("-------------------\n");
+		printContentFile(dayFiles[i]);
+		printf("____________________\n");
+		//free(tempDate);
+	}
+	//printf("\n");
+	purgeFiles(directoryExam());
+	deleteFile(rawFile);
+	free(dayFiles);
+	//free(rawFile);
+	free(sysDate);
+	exit(0);
+}
+
 
 /*
 * Function: knapSackDone
@@ -654,12 +1123,21 @@ void knapSackDone(char **n, float *fnum,int numRec, float budget,int prec){
 		}
 	}
 	budget/=mplier;
+	int notInBujget=0;
+	
 	for(i=0; i<numRec; i++){
-		if(chosen[i]==NOTFOUND)
+		
+		if(chosen[i]==NOTFOUND){
+			notInBujget++;
 			continue;
+		}			
 		if(fnum[chosen[i]-1]>budget)
 			continue;
 		printf("%-40s $%.2f\n",n[chosen[i]-1],fnum[chosen[i]-1]);
+	}
+	
+	if(notInBujget==numRec && norteDam == 0){
+		printf("Nothing available in given budget: $%.2f\n",budget);
 	}
 	//free(a_map);
 	//free(b_map);
@@ -669,58 +1147,6 @@ void knapSackDone(char **n, float *fnum,int numRec, float budget,int prec){
 	//free(chosen);
 }	
 
-/*
-* Function: getFileNames
-* Description:
-* Returns the file list in form of ; appending string values. 
-* @author: Srinivasan Rajappa
-* Date: 2 July, 2015
-* References: http://stackoverflow.com/questions/8149569/scan-a-directory-to-find-files-in-c
-*/
-
-char * getFileNames(char *dir){
-	int i=0,j=0,count=0; 
-	char *namesOfFiles;
-	DIR *dp,*ds;
-    struct dirent *entry;
-    struct stat statbuf;
-    if((dp = opendir(dir)) == NULL) {
-        fprintf(stderr,"cannot open directory: %s\n", dir);
-        return;
-    }
-    chdir(dir);
-    namesOfFiles = (char*)malloc(sizeof(char)*MAXLINE);
-    	memset(namesOfFiles,'\0',MAXLINE);
-
-    while((entry = readdir(dp)) != NULL) {
-        lstat(entry->d_name,&statbuf);
-        if(strMatch(entry->d_name,".csv")==FOUND){
-        	strcat(namesOfFiles,entry->d_name);
-        	strcat(namesOfFiles,";");
-        	i++;
-        }
-    }
-    numOfFiles = i;
-    return namesOfFiles;
-}
-/*
-* Function: directoryExam
-* Description:
-* It calls the above function; it has stop gate measures to avoid
-* falling into a situation when the current working directory is 
-* not to be found. 
-* @author: Srinivasan Rajappa
-* Date: 2 July, 2015
-* References: http://stackoverflow.com/questions/298510/how-to-get-the-current-directory-in-a-c-program
-*/
-
-char* directoryExam(){
-	char cwd[MG];
-	if (getcwd(cwd, sizeof(cwd)) == NULL)
-       	printf("DirectoryExam: getcwd() error\n");
-    else
-    	return getFileNames(cwd);
-}
 
 /*
 * Function: makeUse
@@ -733,9 +1159,12 @@ char* directoryExam(){
 void makeUse(char**n, char**p, int numRec, float budget){
 	int i,j =0,p_val=0,flag=0, s_p=0;
 	float sample_bud;
-
+	char dupStr[NG];
+	char dupStr2[NG];
+		memset(dupStr2,'\0',NG);
+		memset(dupStr,'\0',NG);
 	//Print the free Ones and the Closed on Duty ones
-	if(strcmp(n[0],Toupper("Closed for the Holiday"))==0||strMatch(n[0],"Closed")==FOUND||strMatch(n[0],"Holiday")==FOUND){
+	if(strcmp(n[0],Toupper("Closed for the Holiday"))==0||strMatchCase(n[0],"Closed")==FOUND||strMatchCase(n[0],"Holiday")==FOUND){
 		printf("%-40s\n","Closed for the Holiday");
 		flag = 1;		//exit(0);
 	}
@@ -748,16 +1177,20 @@ void makeUse(char**n, char**p, int numRec, float budget){
 		if(new_p==NULL)
 			printf("makeUse: new_p out of memory\n");
 		// ********STOP GATE MEASURES-----END
+
 		for(i=0; i<numRec; i++){
-			if(strcmp(p[i],"Free")==0||
+			if(strMatchCase(n[i],filteredItem)==FOUND && EXCLUSION_MODE==1 ){
+				continue;
+			}
+			else if(strlen(p[i])==1 || strlen(n[i])==1){
+				continue;
+			}else if(strMatchCase(p[i],"Free")==FOUND||
 				strcmp(p[i],"0")==0||
 				strcmp(p[i],"0.0")==0||
-				strcmp(p[i],"0.00")==0||
-				strcmp(p[i],"free")==0
+				strcmp(p[i],"0.00")==0
 				){
 				printf("%-40s Free\n",n[i]);
-				continue;
-			}else if(strlen(p[i])==1 || strlen(n[i])==1){
+				norteDam = 1;
 				continue;
 			}
 			else{
@@ -775,8 +1208,9 @@ void makeUse(char**n, char**p, int numRec, float budget){
 				j++;
 			}
 		}
+		
 		numRec = j;
-		//free(n);
+
 		//free(p);
 		float *fnum = (float*)malloc(sizeof(float)*NG);
 		dot = 0; 			//initialize
@@ -798,15 +1232,15 @@ void makeUse(char**n, char**p, int numRec, float budget){
 void makeDecision(char *sysDate){
 	FILE *readFile;
 	
-	strcat(sysDate,".csv");
 	readFile = fopen(sysDate,"r");
 	
 	char sample[MG];
 		
 
 	if(readFile == NULL){
-		printf("makeDecision: Unable to read File %s\n",sysDate);
-		exit(0);
+		FILE_NOT_FOUND;
+		logEntry("makeDecision, file disappears :",sysDate,Err);
+		Exit(EXIT_ABNORMAL);
 	}
 
 	
@@ -824,6 +1258,7 @@ void makeDecision(char *sysDate){
     }
     numRec /=2;
     numRec --; 
+    
     fclose(readFile);
     readFile = fopen(sysDate,"r");
 
@@ -837,15 +1272,10 @@ void makeDecision(char *sysDate){
     */
     while(fgets(line,i,readFile)){
 
-    	str[x] = (char*)malloc(sizeof(char)*MG);
-    	memset(str[x],'\0',MG);
+    	str[x] = (char*)malloc(sizeof(char)*STR_MAX);
+    	memset(str[x],'\0',STR_MAX);
     	snprintf(str[x],MG,"%s%s%s%s",csvVal(line,',',1),"-",csvVal(line,',',2),"-");
-    	if(x==0){
-    		firstEntry = (char*)malloc(sizeof(char)*MG);
-    		memset(firstEntry,'\0',MG);
-    		strcpy(firstEntry,str[x]);
-    	}
-    	
+
     	x++;
     	
     }
@@ -870,10 +1300,14 @@ void makeDecision(char *sysDate){
     	}
     }
     close(readFile);
+
     makeUse(name,price,numRec,bd);
     //free(name);
     //free(price);
 }
+
+
+
 
 /*
 * Function: returnBestList
@@ -888,31 +1322,70 @@ void makeDecision(char *sysDate){
 void returnBestList(char *sysdate,char *namesOfFiles){
 	char *fileDate = (char*)malloc(sizeof(char)*MG);
 	char *name = (char*) malloc(sizeof(char)*MG);
+	char *dname = (char*) malloc(sizeof(char)*MG);
 		memset(fileDate,'\0',MG);
 		memset(name,'\0',MG);
+		memset(dname,'\0',MG);
+
 	strcpy(fileDate,sysdate);
 	strcat(fileDate,".csv");
 	
-	int i,j,k;
-	i=j=k=0;
+	int i,j,k,flag,val,found,q;
+	i=k=j=flag=q=found=0;
 	
+	char **dayFiles = malloc(sizeof(char*)*STR_MAX);
+
+
 	for(i=0; i<strlen(namesOfFiles); i++){
 		if(namesOfFiles[i]==';'){
 			name[j]='\0';
-			if(strcmp(fileDate,name)<=0){
-				printf("\n");
-				printf("Date #%s\n",csvVal(name,'.',1));
-				makeDecision(csvVal(name,'.',1));	
-				printf("____________________\n");				
-			}	
 			j=0;	
+			if(strcmp(fileDate,name)<=0){
+				dayFiles[q] = (char*)malloc(sizeof(char)*NG);
+					memset(dayFiles[q],'\0',NG);
+				strcpy(dayFiles[q],name); 
+				//printf("(day :%s\n",dayFiles[q]);
+				q++;
+
+			}
 		}else{
 			name[j++] = namesOfFiles[i];		
 		}
 	}
+	sortFileNames(dayFiles,q);
+	for(i=0; i< q; i++){
+		printf("\n");		
+		strcpy(dname,dayFiles[i]);
+		if(strcmp(fileDate,dayFiles[i])==0)
+			printf("Date: %s (Today)\n",properFormat(dname) );
+		else
+			printf("Date: %s\n",properFormat(dname));
+		printf("-------------------\n");
+		//printf("%s\n",dayFiles[i]);
+		makeDecision(dayFiles[i]);
+		printf("____________________\n");
+		flag =1;
+	}
+
+	if(flag == 0){
+		printf("No menus found for the date (%s) and the ones beyond this date\n",sysdate );
+	}
 	free(fileDate);
+	free(dayFiles);
 	free(name);
+	free(dname);
 }
+
+
+//===============================================================================================================================//
+//=============================== Purging meta data files are  done here, below =================================================//
+//===============================================================================================================================//
+//===============================================================================================================================//
+
+
+
+
+
 
 /*
 * Function: deleteFile
@@ -923,8 +1396,9 @@ void returnBestList(char *sysdate,char *namesOfFiles){
 * References: http://www.programmingsimplified.com/c-program-delete-file
 */
 void deleteFile(char *name){
-	if(remove(name)!=0)
-	  printf("deleteFile: Unable to delete file %s\n",name);
+	if(remove(name)!=0){
+		logEntry("deleteFile Unable to delete: ",name,Err);
+	}
 }
 /*
 * Function: purgeFiles
@@ -950,6 +1424,7 @@ void purgeFiles(char *fileListString){
 			name[j++] = fileListString[i];		
 		}
 	}
+
 	free(name);
 	free(fileListString);
 }
